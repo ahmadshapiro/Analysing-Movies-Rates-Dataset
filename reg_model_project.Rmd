@@ -1,0 +1,271 @@
+---
+title: "Modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(ggthemr)
+ggthemr('fresh')
+```
+
+### Load data
+
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+
+
+* * *
+
+## Part 1: Data
+The data set is comprised of 651 randomly sampled movies produced and released before 2016.
+
+It includes information from Rotten Tomatoes and IMDB about those movies. 
+
+We cannot infer causality from such data set because it's an observed data , treatment isn't randomly assigned so we can only make correlation conclusions. 
+* * *
+
+## Part 2: Research question
+
+What are the factors responsible for increasing/decreasing the IMDB rate for a certain movie ? 
+
+this question and it's findings may help movie creators to know the secret recepie for making high rated movie.
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+Let's check the types of movies we have in our data set.
+```{r}
+movies %>% ggplot(aes(x=title_type)) + geom_bar(alpha=0.7) + labs(x="Movie Type", y= "Number of Movies")
+```
+As we can see from above that most of the movies are featured films. 
+
+Let's see the distribution of runtime for each movie type 
+
+```{r}
+movies %>% ggplot(aes(x=runtime,fill=title_type)) + geom_density(alpha=0.5) + labs(x="Run Time", y= "Desnity",fill="Movie Type")
+```
+
+```{r}
+movies %>% group_by(title_type) %>% summarise(mean_run_time=mean(runtime,na.rm = TRUE))
+```
+
+We can see that the Documentary movies are normally distributed but with more outliers on the right and mean around 97.7 minutes.
+Feature films are right skewed with mean around 107 minutes. 
+TV Movies follows more of a bimodal distribution with mean around 102 minutes. 
+
+So let's check the distibution of IMDB Ratings 
+
+```{r}
+mean_ratings = mean(movies$imdb_rating)
+mean_ratings
+movies %>% ggplot(aes(x=imdb_rating)) + geom_density() + 
+  geom_vline(xintercept =mean_ratings,color="red",linetype="dashed") + geom_text(x=5,y=0.3,label="Mean = 6.5",color="red",family = "Times New Roman")
+```
+We can see above the rating distribution is left skewed with mean around 6.5. 
+
+Let's see the distribution of rating according to movie genre 
+
+```{r}
+by_genre <- movies %>% group_by(genre) 
+rating_by_genre <- by_genre %>% summarise(mean_imdb_rating = mean(imdb_rating))
+rating_by_genre <- arrange(rating_by_genre,desc(mean_imdb_rating))
+rating_by_genre$genre <- factor(rating_by_genre$genre, levels = rating_by_genre$genre)
+rating_by_genre %>% ggplot(aes(x=genre,y= mean_imdb_rating)) + geom_bar(stat ="identity") + theme(axis.text.x = element_text(angle = 90))
+```
+
+We can see from above that Documentaries has the highest ratings , followed by Musical and Preforming arts and then Drama .
+* * *
+
+## Part 4: Modeling
+
+```{r}
+model_1_all <- lm(data = movies,imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_month + best_pic_nom + best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box + director +actor1 + actor2 + actor3 + actor4 + actor5)
+
+summary(model_1_all)[4]
+```
+
+As we can see that both R-squared and Adjusted R-squared is 1 , which means our
+models captures 100% of the variability in the imdb_ratings , let's try and
+remove the actors predictor from the model and see if it's going to make
+any differnce. 
+
+
+
+We can engineer two new features.
+knowing_director : a binary variable that will let us know if knowing the 
+director makes any difference or not. 
+
+Since we have 5 variables from actor1 to actor5 which let us know if the 
+5 main actors in the moving are Oscars winners or not , we can engineer a
+new feature which is oscars_actors : number of Oscars winner actors in the 
+movie (since many movies has Nan in actor1 to actor5 which means that one of
+those roles aren't played by an Oscars winner ) 
+
+
+Let's first check the number of Nan in director column. 
+```{r}
+sum(is.na(movies$director))
+```
+
+We can see that only two movies in our data set are missing names of their directors. 
+
+Let's check NaNs in actor1 to actor5 
+
+```{r}
+sum(is.na(movies$actor1)) + sum(is.na(movies$actor2)) +sum(is.na(movies$actor3)) +
+  sum(is.na(movies$actor4)) + sum(is.na(movies$actor5))
+```
+
+We can encode the new oscars_actors columns now .
+
+```{r}
+oscars_actors <- as.numeric(!is.na(movies$actor1)) + as.numeric(!is.na(movies$actor2)) + as.numeric(!is.na(movies$actor3)) + as.numeric(!is.na(movies$actor4)) + as.numeric(!is.na(movies$actor5)) 
+
+movies$oscars_actors <- oscars_actors
+```
+
+Let's check the directors column. 
+
+```{r}
+length(unique(movies$director))
+```
+
+We can see from above that we have 533 unique director. 
+
+Let's check the NANs in this column. 
+
+```{r}
+sum(is.na(movies$director))
+```
+So let's try and fit another model without the director column and see the 
+difference before adding our engineered features. 
+
+```{r}
+model_2_no_director <- lm(data = movies,imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_month + best_pic_nom + best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box  +actor1 + actor2 + actor3 + actor4 + actor5)
+
+summary(model_2_no_director)[4]
+```
+We can see that removing directors for the model didn't decrease neither 
+R-squared not the Adjusted one.
+
+Now let's add our new feautre. 
+
+```{r}
+model_featured_1 <- lm(data = movies,imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_month + best_pic_nom + best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box + oscars_actors)
+
+summary(model_featured_1)[4]
+```
+We can see from above that our engineered feature didn't capture as much as the
+removed features of actor1 to actor5 , 
+
+
+Which means , that knowing the actor/actress himself/herself is more informative
+more than knowing if they are Oscars winners or not. 
+
+But according to above we can conclude that including `thtr_rel_month`,
+`best_pic_nomyes` , `best_pic_winyes`, `best_actor_winyes` , 
+and `best_actress_winyes` wasn't significant at all ,
+but the `best_dir_winyes` : Knowing if the director is Oscar winner or not was 
+significant at 5% significance level . 
+
+
+
+We will remove them from our next model , but first let's check how many unique 
+actors we've in the data set. 
+
+
+```{r}
+length(unique(c(movies$actor1,movies$actor2,movies$actor3,movies$actor4,movies$actor5)))
+```
+
+We can see from above the we have 2363  different actors, but do really knowing 
+all the five main actors is a must? 
+
+Let's build a model with only the first two main characters. 
+
+```{r}
+model_3_actors_2 <- lm(data = movies,imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_month + best_pic_nom + best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box  +actor1 + actor2 )
+
+summary(model_3_actors_2)[4]
+```
+As we illustrated above , knowing the two main characters was enough to predict 
+the rating , so let's build a model without the omitted variables we mentioned earlier, 
+and with only first 2 main characters. 
+
+
+```{r}
+model_4 <-lm(data = movies,imdb_rating ~ title_type + genre + runtime + best_dir_win +actor1 )
+
+summary(model_4)
+```
+And as we thought that only knowing first two actors along with the genre, 
+runtime ,title_type  and whether the director is oscar winner or not , we could 
+estimate the rating of the movie. 
+
+* * *
+
+## Part 5: Prediction
+Now for the prediction task. 
+
+We will choose The Magnificent Seven,  because it's my 2016 favorite movie , also it's 
+not included in the data set, and we will try and predict it's rating. 
+
+Movie available at : [The Magnificent Seven](https://www.imdb.com/title/tt2404435/?ref_=adv_li_tt)
+
+Movie rate is = 6.9
+
+actor1 -> "Denzel Washington" 
+
+actor2 -> "Ethan Hawke" 
+
+title_type -> "Feature Film"
+
+genre -> "Action & Adventure"
+
+runtime -> 132 
+
+best_dir_win -> yes " Antoine Fuqua" 
+
+lm(formula = imdb_rating ~ title_type + genre + runtime + best_dir_win + 
+    actor1 + actor2, data = movies)
+    
+```{r}
+non_cul_animals <- data.frame("title_type" = "Feature Film" , "genre" = "Action & Adventure" ,  "runtime" = 132 , "best_dir_win"= "yes" , "actor1" = "Denzel Washington" , "actor2" = "Ethan Hawke" )
+non_cul_animals
+```
+
+
+
+
+```{r}
+k <- predict.lm(object = model_4,newdata = non_cul_animals,interval = "confidence")
+k
+```
+As we can see that the predicted rate is 6.85 and the true rate is 6.9  ,
+with 95% confidence interval (5.555125,8.151136).
+
+We can conclude from the result that our model captured the real rate, but we 
+have one limitation that it needs to be fed more data of actors because if the 2nd actor wasn't available in our dataset it would make a problem. 
+
+
+* * *
+
+## Part 6: Conclusion
+
+We couldn't infer a causal statements from our research above , but we captured the relationship between some features in the movie and the rate it was given at IMDB , also we tested it for a random movie the dataset wasn't trained on and it accurately predicted it's rate, but the onlt draw back we have is our model needs to be fed more data to acuratly control for more actors in any given character. 
+ 
